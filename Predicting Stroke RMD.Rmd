@@ -1,0 +1,399 @@
+---
+title: "Predicting Stroke"
+author: "Charlie Oliver Ontoria Gomez"
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+output: pdf_document
+---
+```{r Loading the libraries , echo = FALSE, message = FALSE, warning= FALSE}
+if(!require(tidyverse)) install.packages("tidyverse", repos = "http://cran.us.r-project.org")
+if(!require(caret)) install.packages("caret", repos = "http://cran.us.r-project.org")
+if(!require(data.table)) install.packages("data.table", repos = "http://cran.us.r-project.org")
+if(!require(dslabs)) install.packages("dslabs", repos = "http://cran.us.r-project.org")
+
+library(dslabs)
+library(data.table)
+library(tidyverse)
+library(caret)
+
+#Loading the dataset
+dataset <- read.csv(file = "healthcare-dataset-stroke-data.csv")
+```
+
+# Introduction
+ This project aims to determine the impact of predictors in the data set on the
+risk of having a stroke. To do this, classification algorithms k-nearest neighbors, random forest, and logistic regression were used individually and
+together as an ensemble. A combination of accuracy and f1 score were used to
+determine the effectiveness of the algorithms.
+
+The following code will show more information regarding the data set
+```{r Getting to know the dataset}
+dim(dataset)
+names(dataset)
+head(dataset)
+```
+This dataset was downloaded from https://www.kaggle.com/fedesoriano/stroke-prediction-dataset. The stroke column is what we want to predict. Gender, age, a history of hypertension, a history of heart disease, being married, work type, residence type, average glucose level, and body mass index (bmi) are our predictors.
+
+\newpage
+#  Method/Analysis
+Before performing the algorithms, I made sure that the data set is clean and that the columns are of the right class.
+
+##  Checking for NAs and Correcting Column Class
+```{r message = FALSE, warning= FALSE}
+sum(is.na(dataset))
+```
+
+It says there are no NAs but visually inspecting the data set, the column bmi has NAs. You can easily see the one from row 2. This means that the column's class is character. Let's check
+```{r message = FALSE, warning= FALSE}
+class(dataset$bmi)
+```
+
+Changing bmi column into numeric and replacing NAs with the mean of the column
+```{r message = FALSE, warning= FALSE}
+dataset <- dataset %>% mutate(bmi = as.numeric(bmi))
+dataset$bmi[is.na(dataset$bmi)] <- mean(dataset$bmi, na.rm = TRUE)
+```
+
+Since we are doing classification, we need the stroke column to be a factor
+```{r message = FALSE, warning= FALSE}
+class(dataset$stroke)  
+```
+
+This is the code to change that character column into a factor column
+```{r message = FALSE, warning= FALSE}
+dataset <- dataset %>% mutate(stroke = as.factor(stroke))
+```
+
+
+I also removed a row because the gender is "Other". I could not make sense of it so I simply removed it knowing that it would not affect the results.
+
+```{r message = FALSE, warning= FALSE}
+dataset <- dataset[-which(dataset$gender == "Other"),]
+```
+
+## Exploratory Data Analysis
+```{r message = FALSE, warning= FALSE}
+mean(dataset$gender == "Male") 
+median(dataset$age) 
+min(dataset$age)  
+sum(dataset$age <1) 
+max(dataset$age)
+mean(dataset$Residence_type == "Urban") 
+```
+
+From the above analysis we can see that there's more women (59%) than men (41%). We have  43 infants in the data set. I did not see this as an anomaly since babies also get stroke. The residence_type distribution is well balanced.
+
+Checking the prevalence in the stroke column was also important
+```{r message = FALSE, warning= FALSE}
+mean(dataset$stroke == 1)
+```
+We can see that there is a very low prevalence of people with stroke. This affected the algorithm results.
+
+The data set was first divided into a training set and a test set. Then I ran the algorithms.
+
+```{r echo=FALSE, message = FALSE, warning= FALSE}
+set.seed(1, sample.kind = "Rounding") #set.seed(1) for R versions 3.5 or older
+test_index <- createDataPartition(dataset$stroke, times = 1, p = 0.5, list = FALSE)
+test_set <- dataset %>% slice(test_index)
+train_set<- dataset %>% slice(-test_index)
+```
+
+## Running the Algorithms
+
+### K-Nearest Neighbors
+```{r message = FALSE, warning= FALSE}
+control <- trainControl(method = "cv", number = 10) #classic 10-fold cross validation
+fit_knn <- train(stroke ~ gender + age + hypertension + heart_disease + ever_married + work_type + Residence_type + avg_glucose_level + bmi + smoking_status, trControl = control, data = train_set, method = "knn")
+prediction_knn <- predict(fit_knn, newdata = test_set)
+
+confusionMatrix(prediction_knn, test_set$stroke)
+```
+
+As we can see we have an accuracy of 94.79% which is great. But unfortunately, 
+the algorithm was not able to predict any true positives. Accuracy alone is not a good measurement of effectiveness of our model. We will use f1 score along with accuracy. This is due to the low prevalence of stroke in the data. We can get a high accuracy simply by predicting 0.
+
+### Random Forest
+Let's see if random forest trees are better. We'll use rborist for faster 
+computation time
+```{r message = FALSE, warning= FALSE}
+control <- trainControl(method = "cv", number = 5, p = 0.8) #5-fold for faster computation
+fit_rborist <- train(stroke ~ gender + age + hypertension + heart_disease + ever_married + work_type + Residence_type + avg_glucose_level + bmi + smoking_status, trControl = control, data = train_set, method = "Rborist")
+prediction_rborist <- predict(fit_rborist, newdata = test_set)
+
+confusionMatrix(prediction_knn, test_set$stroke)
+```
+
+The results were the same. It was not able to prevail over the prevalence.
+
+## Modifying the Data
+There are several ways to go about this but the easiest way seems to be balancing the data set. A small sample of the no-stroke data equivalent to the number of stroke-data was used.
+```{r message = FALSE, warning= FALSE}
+dataset_stroke <- dataset %>% filter(stroke == 1)
+dataset_no_stroke <- dataset %>% filter(stroke == 0)
+
+set.seed(1, sample.kind = "Rounding") #set.seed(1) for R versions 3.5 or older
+index <- sample(1:nrow(dataset_no_stroke), size = nrow(dataset_stroke), replace = FALSE)
+dataset_no_stroke <- dataset_no_stroke[index,]
+
+dataset_balanced <- full_join(dataset_stroke, dataset_no_stroke)
+```
+
+## Redoing the Exploratory Data Analysis
+```{r message = FALSE, warning= FALSE}
+mean(dataset_balanced$gender == "Male") 
+median(dataset_balanced$age)
+min(dataset_balanced$age) 
+sum(dataset_balanced$age <1) 
+max(dataset_balanced$age)
+mean(dataset_balanced$Residence_type == "Urban") 
+```
+
+The male distribution changed from 41% to 44% which is better. The median age changed from 43 to 59 years old. The number of infants are down from 43 to 2 which is expected. There's a bigger percentage of urban dwellers at 52% up from 50%. This looks ok.
+
+The dataset was again split into a training set and a test set. Since there is only a few rows , a 50/50 distribution was used. 
+```{r echo = FALSE, message = FALSE, warning= FALSE}
+set.seed(1, sample.kind = "Rounding")
+test_index_balanced <- createDataPartition(dataset_balanced$stroke, times = 1, p = 0.5, list = FALSE)
+test_set_balanced <- dataset_balanced %>% slice(test_index_balanced)
+train_set_balanced <- dataset_balanced %>% slice(-test_index_balanced)
+```
+
+## Running the Algorithms with the Balanced Data Set
+### K-Nearest Neighbors
+```{r message = FALSE, warning= FALSE}
+control <- trainControl(method = "cv", number = 10) #classic 10-fold cross validation
+fit_knn_balanced <- train(stroke ~ gender + age + hypertension + heart_disease + ever_married + work_type + Residence_type + avg_glucose_level + bmi + smoking_status, trControl = control, data = train_set_balanced, method = "knn")
+prediction_knn_balanced <- predict(fit_knn_balanced, newdata = test_set_balanced)
+
+confusionMatrix(prediction_knn_balanced, test_set_balanced$stroke, positive = "1")
+#F1 Score
+F_meas(prediction_knn_balanced, test_set_balanced$stroke)
+```
+
+This is much better. We are able to predict 106 positives on the people with stroke. We have a higher sensitivity vs specificity which is what we want but not too high. The f1 score looks ok. 
+
+
+### Random Forest
+```{r message = FALSE, warning= FALSE}
+control <- trainControl(method = "cv", number = 10) #classic 10-fold cross validation
+fit_rf_balanced <- train(stroke ~ gender + age + hypertension + heart_disease + ever_married + work_type + Residence_type + avg_glucose_level + bmi + smoking_status, trControl = control, data = train_set_balanced, method = "rf")
+prediction_rf_balanced <- predict(fit_rf_balanced, newdata = test_set_balanced)
+
+confusionMatrix(prediction_rf_balanced, test_set_balanced$stroke, positive = "1")
+
+#F1 Score
+F_meas(prediction_rf_balanced, test_set_balanced$stroke)
+```
+
+It looks like knn is slightly better. In here there are 104 true positives compared to knn's 106 true positives. There's an additional 2 false negatives that were true positives in knn. The accuracy of knn is 0.744 compared to random forest's 0.736. Because of that the f1 score is slight lower as well. Of course we cannot use this statistic to judge which algorithm is better because that includes the test_set. Let's check the minimum accuracy estimates
+
+```{r echo = FALSE, message = FALSE, warning= FALSE}
+best_tune_knn <- fit_knn_balanced$bestTune
+```
+
+```{r message = FALSE, warning= FALSE}
+fit_rf_balanced$results$Accuracy[fit_rf_balanced$bestTune[1,]]
+
+fit_knn_balanced$results$Accuracy[2]
+```
+
+Here we can see that random forest is slightly better than knn with our train_set alone. All in all, it's almost the same. Random forest has better accuracy according to minimum accuracy estimates but knn performed slightly better on the test set with both accuracy and f1 score.
+
+### Checking for Variable Importance of the Predictors
+```{r message = FALSE, warning= FALSE}
+varImp(fit_rf_balanced)
+```
+
+From this we can see that age is the biggest factor in strokes. It is followed
+by avg_glucose_level and bmi. These are well known factors. genderMale and Residence_typeUrban have minor effects. This is something we can consider. There might be underlying reasons concerning genetics and environment. I am wondering about the ever_marriedYes, hypertension, and heart_disease. Hypertension and heart disease are known to contribute to the risk of having a stroke and I expected them to have more impact. Intuitively, marriage does not seem like it should have a big impact. This could be due to our data. 
+```{r message = FALSE, warning= FALSE}
+#Checking for Married Distribution
+mean(dataset_balanced$ever_married == "Yes")
+mean(dataset$ever_married == "Yes")
+```
+
+There is a prevalence of married people in our dataset. Therefore, we cannot
+conclusively say marriage has an impact on increasing the risk of stroke.
+
+```{r message = FALSE, warning= FALSE}
+#Checking for Heart Disease Distribution
+mean(dataset_balanced$heart_disease)
+mean(dataset$heart_disease)
+
+#Checking for Hypertension Distribution
+mean(dataset_balanced$hypertension)
+mean(dataset$hypertension)
+```
+Only a minority of the people in our data set have heart_disease or hypertension. This could be the reason why it has less impact than it should. As for smoking, it seems that non-smokers have a higher risk of having a stroke. Let's check
+
+```{r message = FALSE, warning= FALSE}
+#Checking for Smoking Status Distribution
+data.frame(dataset$smoking_status) %>% distinct()
+mean(dataset$smoking_status == "never smoked")
+mean(dataset$smoking_status == "formerly smoked")
+mean(dataset$smoking_status == "Unknown")
+mean(dataset$smoking_status == "smokes")
+
+data.frame(dataset_balanced$smoking_status) %>% distinct()
+mean(dataset_balanced$smoking_status == "never smoked")
+mean(dataset_balanced$smoking_status == "formerly smoked")
+mean(dataset_balanced$smoking_status == "Unknown")
+mean(dataset_balanced$smoking_status == "smokes")
+```
+
+A third of the data is unknown. Only 15%/16% actually smokes. This assessment by the algorithm is unreliable.
+
+The work_type variable importance does not make much sense either. We will attribute whatever value associated with it as random chance.
+
+There are faults in our data that could be attributed to data collection.
+
+### Logistic Regression
+We will now test logistic regression (glm). Let's check how it does individually
+```{r message = FALSE, warning= FALSE}
+control <- trainControl(method = "cv", number = 10) #classic 10-fold cross validation
+fit_glm_balanced <- train(stroke ~ gender + age + hypertension + heart_disease + ever_married + work_type + Residence_type + avg_glucose_level + bmi + smoking_status, trControl = control, data = train_set_balanced, method = "glm")
+prediction_glm_balanced <- predict(fit_glm_balanced, newdata = test_set_balanced)
+
+confusionMatrix(prediction_glm_balanced, test_set_balanced$stroke, positive = "1")
+#F1 Score
+F_meas(prediction_glm_balanced, test_set_balanced$stroke)
+```
+
+Looks ok. It almost has the same statistics as knn and rf, only slightly worse.
+
+## Running the Algorithms with Chosen Predictors
+We will redo our models with our chosen predictors which are gender, age, hypertension, heart_disease, residence type, and bmi and see how it fares with the old model with all the predictors
+
+### K-Nearest Neighbors Model with Chosen Predictors
+```{r message = FALSE, warning= FALSE}
+control <- trainControl(method = "cv", number = 10) #classic 10-fold cross validation
+fit_knn_balanced_2 <- train(stroke ~ gender + age + hypertension + heart_disease + Residence_type + avg_glucose_level + bmi, trControl = control, data = train_set_balanced, method = "knn")
+prediction_knn_balanced_2 <- predict(fit_knn_balanced, newdata = test_set_balanced)
+
+confusionMatrix(prediction_knn_balanced_2, test_set_balanced$stroke, positive = "1")
+#F1 Score
+F_meas(prediction_knn_balanced_2, test_set_balanced$stroke)
+```
+
+Same results as with the k-nearest neighbors model using all the predictors.
+
+### Random Forest Model with Chosen Predictors
+```{r message = FALSE, warning= FALSE}
+control <- trainControl(method = "cv", number = 10) #classic 10-fold cross validation
+fit_rf_balanced_2 <- train(stroke ~ gender + age + hypertension + heart_disease + Residence_type + avg_glucose_level + bmi, trControl = control, data = train_set_balanced, method = "rf")
+prediction_rf_balanced_2 <- predict(fit_knn_balanced, newdata = test_set_balanced)
+
+confusionMatrix(prediction_rf_balanced_2, test_set_balanced$stroke, positive = "1")
+#F1 Score
+F_meas(prediction_rf_balanced_2, test_set_balanced$stroke)
+```
+
+Not surprisingly, our random forest model improved a little bit. It has now an equal score on both accuracy and f1 as with k-nearest neighbors. It was able to predict 2 additional true positives.
+
+Let's check the new variable importance
+```{r}
+varImp(fit_rf_balanced_2)
+```
+
+In our new model, gender and residence type has almost no effect. Most of the calculations are made on age, avg_glucose_level, and bmi, with a minor heart_disease and hypertension effect.  
+
+
+###  Logistic Regression Model with Chosen Predictors
+```{r message = FALSE, warning= FALSE}
+control <- trainControl(method = "cv", number = 10) #classic 10-fold cross validation
+fit_glm_balanced_2 <- train(stroke ~ gender + age + hypertension + heart_disease + Residence_type + avg_glucose_level + bmi, trControl = control, data = train_set_balanced, method = "glm")
+prediction_glm_balanced_2 <- predict(fit_glm_balanced_2, newdata = test_set_balanced)
+
+confusionMatrix(prediction_glm_balanced_2, test_set_balanced$stroke, positive = "1")
+#F1 Score
+F_meas(prediction_glm_balanced_2, test_set_balanced$stroke)
+```
+
+Our logistic regression model also performed slightly better, predicting an additional true positive which improved accuracy and f1 score. It has the highest f1 score and accuracy among the all the models tested so far.
+
+### Ensemble Model
+Here we will check if an ensemble of random forest, k-nearest neighbors, and logistic regression is better than the individual algorithms. An All Predictors Model and Chosen Predictors Model was used.
+
+#### Ensemble All Predictors Model  
+```{r message = FALSE, warning= FALSE}
+models <- c("knn", "rf", "glm")
+
+set.seed(1, sample.kind = "Rounding") #set.seed(1) for R versions 3.5 or older
+fits <- lapply(models, function(x){ 
+  print(x)
+  train(stroke ~ gender + age + hypertension + heart_disease + ever_married + work_type + Residence_type + avg_glucose_level + bmi + smoking_status, trControl = control, data = train_set_balanced, method = x)
+}) 
+
+names(fits) <- models
+
+predictions <- sapply(fits, function(x) 
+  predict(x, newdata = test_set_balanced))
+
+votes <- rowMeans(predictions == "1")
+y_hat <- ifelse(votes > 0.5, "1", "0")
+confusionMatrix(factor(y_hat), test_set_balanced$stroke)
+#F1 Score
+F_meas(factor(y_hat), test_set_balanced$stroke)
+```  
+
+
+#### Ensemble Chosen Predictors Model  
+```{r message = FALSE, warning= FALSE}
+models <- c("knn", "rf", "glm")
+
+set.seed(1, sample.kind = "Rounding") #set.seed(1) for R versions 3.5 or older
+fits_2 <- lapply(models, function(x){ 
+  print(x)
+  train(stroke ~ gender + age + hypertension + heart_disease + Residence_type + avg_glucose_level + bmi, trControl = control, data = train_set_balanced, method = x)
+}) 
+
+names(fits_2) <- models
+
+predictions_2 <- sapply(fits_2, function(x) 
+  predict(x, newdata = test_set_balanced))
+
+votes_2 <- rowMeans(predictions_2 == "1")
+y_hat_2 <- ifelse(votes_2 > 0.5, "1", "0")
+confusionMatrix(factor(y_hat_2), test_set_balanced$stroke)
+#F1 Score
+F_meas(factor(y_hat_2), test_set_balanced$stroke)
+```
+
+\newpage
+# Results  
+The ensemble model is better than the individual algorithms based on accuracy. Logistic Regression Chosen Predictors model was able to get a slightly better f1 score. Using our chosen predictors improve the accuracy and f1 score slightly as shown here.
+```{r message = FALSE, warning= FALSE}
+# Accuracy and F1 Scores
+
+#Ensemble All Predictors Model
+mean(y_hat == test_set_balanced$stroke)         #Accuracy
+F_meas(factor(y_hat), test_set_balanced$stroke) #F1 Score
+
+#Ensemble Chosen Predictors Model
+mean(y_hat_2 == test_set_balanced$stroke)         #Accuracy
+F_meas(factor(y_hat_2), test_set_balanced$stroke) #F1 Score
+```
+
+These are the best results of the individual algorithms which are on the chosen predictors model. 
+```{r message = FALSE, warning= FALSE}
+#K-nearest Neighbors Chosen Predictors Model
+mean(prediction_knn_balanced_2 == test_set_balanced$stroke) #Accuracy
+F_meas(prediction_knn_balanced_2, test_set_balanced$stroke) #F1 Score
+
+#Random Forest Chosen Predictors Model
+mean(prediction_rf_balanced_2 == test_set_balanced$stroke) #Accuracy
+F_meas(prediction_rf_balanced_2, test_set_balanced$stroke) #F1 Score
+
+#Logistic Regression Chosen Predictors Model
+mean(prediction_glm_balanced_2 == test_set_balanced$stroke) #Accuracy
+F_meas(prediction_glm_balanced_2, test_set_balanced$stroke) #F1 Score
+
+```
+We can clearly see that the Ensemble Chosen Predictors Model is the best model out of the ones we tested based on accuracy. The model with the highest f1 score is the Logistic Regression Chose Predictors Model but only slightly higher than the Ensemble Chose Predictors Model.
+
+\newpage 
+#  Conclusion
+```{r echo = FALSE}
+#New Random Forest Variable Importance
+varImp(fit_rf_balanced_2)
+```
+Based on this analysis, we can conclusively say that age, diet (average glucose level), and weight (bmi) contribute to having a stroke. A history of hypertension and heart disease has a minor effect on stroke risk. Being male and living in an urban setting was first thought to have a minor influence in increasing the risk of stroke but with the new random forest model, their value in the calculations is zero or close to it. We cannot say with certainty that the other factors have an effect on increasing the risk of stroke due to the nature of our data.  An ensemble of random forest, logistic regression and k-nearest neighbors is a better algorithm than any of the individual algorithms. Using only the chosen unbiased predictors gives a slightly better result. The Ensemble Chosen Predictors Model is the best model out of all the models tested. The results of this report was limited by the bias in the excluded predictors in the data and the low prevalence of stroke in the original data set.
